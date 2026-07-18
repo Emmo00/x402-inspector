@@ -115,6 +115,11 @@ app.all("/proxy", async (req, res) => {
 // Serve the static frontend.
 app.use(express.static(__dirname));
 
-app.listen(PORT, () => {
-  console.log(`x402 inspector running at http://localhost:${PORT}`);
-});
+// Vercel invokes the exported app as a serverless handler; only listen locally.
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`x402 inspector running at http://localhost:${PORT}`);
+  });
+}
+
+export default app;
