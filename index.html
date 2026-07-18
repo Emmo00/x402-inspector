@@ -687,6 +687,32 @@
     word-break:break-all;
   }
 
+  .body-head{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    margin-bottom:10px;
+    flex-wrap:wrap;
+  }
+  .body-meta{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-family:var(--mono);
+    font-size:11px;
+    color:var(--text-faint);
+    flex-wrap:wrap;
+  }
+  .body-meta .mime{
+    color:var(--teal);
+    border:1px solid var(--teal-dim);
+    border-radius:var(--radius);
+    padding:2px 7px;
+  }
+  .body-meta .size{ color:var(--text-dim); }
+  .copy-btn.copied{ color:var(--teal); border-color:var(--teal-dim); }
+
   .log-list{
     list-style:none;
     margin:0;
@@ -797,7 +823,7 @@
     </div>
 
     <div class="cors-hint">
-      Requests are routed through the local proxy (<code>/proxy</code>) — the target endpoint is contacted server-side, so CORS never applies and all response headers are visible.
+      the target endpoint is contacted server-side, so CORS never applies and all response headers are visible.
     </div>
 
     <div class="request-tabs">
@@ -916,6 +942,7 @@
       <div class="response-tabs">
         <button class="res-tab-btn active" data-res-tab="headers" onclick="switchResTab('headers')">Response headers</button>
         <button class="res-tab-btn" data-res-tab="requirements" onclick="switchResTab('requirements')">Payment requirements</button>
+        <button class="res-tab-btn" data-res-tab="body" onclick="switchResTab('body')">Response body</button>
         <button class="res-tab-btn" data-res-tab="raw" onclick="switchResTab('raw')">Raw</button>
         <button class="res-tab-btn" data-res-tab="log" onclick="switchResTab('log')">Console log</button>
       </div>
@@ -933,6 +960,14 @@
           <div class="glyph">$</div>
           <div>No payment requirements parsed</div>
           <div class="hint">Once the endpoint returns a 402, the parsed <code>accepts</code> array will be listed here — scheme, network, asset, amount, and payTo per option.</div>
+        </div>
+      </div>
+
+      <div class="res-panel" data-res-panel="body" id="resPanelBody">
+        <div class="empty-state">
+          <div class="glyph">ↆ</div>
+          <div>No resource returned yet</div>
+          <div class="hint">Once a payment settles (or an endpoint returns a resource without payment), the returned body and its content type appear here.</div>
         </div>
       </div>
 
@@ -992,6 +1027,7 @@ const state = {
   accepts: [],            // parsed payment requirement options from the 402
   rootPayload: null,      // the full parsed 402 body/header payload
   raw402: null,           // { headers, bodyText } from the raw 402 response
+  responseBodyRaw: "",    // raw text of the last returned resource body
   selectedIndex: 0,
   originalRequest: null,  // { method, url, headers, body }
   exchanges: []           // [{ label, request, response }] for the Raw tab
@@ -1057,7 +1093,12 @@ function appendLogEntry(level, message){
   li.innerHTML = `<span class="ts">${nowTs()}</span><span class="lvl">${level}</span><span></span>`;
   li.querySelector("span:last-child").textContent = message;
   list.appendChild(li);
-  list.parentElement.scrollTop = list.parentElement.scrollHeight;
+  // Only auto-scroll the log panel itself when it's the visible tab, so the
+  // whole page doesn't jump on every send.
+  const panel = list.closest(".res-panel");
+  if(panel && panel.classList.contains("active")){
+    panel.scrollTop = panel.scrollHeight;
+  }
 }
 
 function clearLog(){
@@ -1112,9 +1153,15 @@ function resetFlow(){
   state.accepts = [];
   state.rootPayload = null;
   state.raw402 = null;
+  state.responseBodyRaw = "";
   state.selectedIndex = 0;
   $("payBar")?.classList.remove("visible");
   renderEmptyRequirements();
+  renderEmptyResponseBody();
+}
+
+function renderEmptyResponseBody(){
+  $("resPanelBody").innerHTML = `<div class="empty-state"><div class="glyph">ↆ</div><div>No resource returned yet</div><div class="hint">Once a payment settles (or an endpoint returns a resource without payment), the returned body and its content type appear here.</div></div>`;
 }
 
 /* ============================================================
@@ -1356,6 +1403,8 @@ async function sendRequest(){
     setPhase("Resource returned (no payment required)", "success");
     ["402","parsed","sign","retry","settled"].forEach(s => setStepStatus(s, "skipped", ""));
     appendLogEntry("success", "Resource returned without a payment challenge.");
+    renderResponseBody(bodyText, resHeaders);
+    switchResTab("body");
   }else{
     setStatusChip(res.status, res.statusText || "Error", "error");
     setPhase("Request failed", "error");
@@ -1569,8 +1618,13 @@ async function checkRowBalance(index){
 
 async function signAndRetry(){
   if(!state.account){
-    appendLogEntry("error", "Connect a wallet before signing a payment.");
-    return;
+    setStepStatus("sign", "error", "wallet not connected");
+    setPhase("Connect a wallet to pay", "amber");
+    switchResTab("log");
+    appendLogEntry("warn", "Connect a wallet before signing a payment — opening wallet connection…");
+    await connectWallet();
+    if(!state.account) return; // user dismissed the wallet prompt
+    setStepStatus("sign", "idle", "");
   }
   const req = state.accepts[state.selectedIndex];
   if(!req){
@@ -1684,6 +1738,8 @@ async function signAndRetry(){
     setStatusChip(res.status, res.statusText || "OK", "success");
     setPhase("Settled — resource returned", "success");
     appendLogEntry("success", `Payment accepted. Server responded ${res.status}.`);
+    renderResponseBody(bodyText, resHeaders);
+    switchResTab("body");
   }else{
     setStepStatus("retry", "success", `${res.status} ${res.statusText}`);
     setStepStatus("settled", "error", `server rejected payment: ${res.status}`);
@@ -1722,8 +1778,64 @@ function renderRaw(){
 }
 
 /* ============================================================
-   INIT
+   RESPONSE BODY TAB (the returned resource)
    ============================================================ */
+
+function prettyMaybeJson(text, mime){
+  if(mime.includes("json") || /^[\[{]/.test(text.trim())){
+    try{ return JSON.stringify(JSON.parse(text), null, 2); }
+    catch{ /* leave as-is */ }
+  }
+  return text;
+}
+
+function renderResponseBody(bodyText, headersObj){
+  const container = $("resPanelBody");
+  const mime = (headersObj["content-type"] || "").split(";")[0].trim() || "unknown";
+  state.responseBodyRaw = bodyText ?? "";
+
+  if(!bodyText){
+    container.innerHTML = `<div class="empty-state"><div class="glyph">ↆ</div><div>Empty response body</div><div class="hint">The server returned no body (content-type: ${escapeHtml(mime)}).</div></div>`;
+    return;
+  }
+
+  const bytes = new TextEncoder().encode(bodyText).length;
+  const sizeLabel = bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+
+  const isText = /^(text\/|application\/(json|xml|javascript|.*\+json|.*\+xml)|$)/.test(mime) || mime === "unknown";
+  let preview;
+  if(isText){
+    const display = prettyMaybeJson(bodyText, mime);
+    preview = `<pre class="raw-json" id="responseBodyPre">${escapeHtml(display)}</pre>`;
+  }else{
+    preview = `<pre class="raw-json">[${escapeHtml(mime)} — ${sizeLabel} of binary data; use "Copy raw" to grab it]</pre>`;
+  }
+
+  container.innerHTML = `
+    <div class="body-head">
+      <div class="body-meta">
+        <span class="mime">${escapeHtml(mime)}</span>
+        <span class="size">${sizeLabel}</span>
+      </div>
+      <button class="btn-mini copy-btn" id="copyBodyBtn">Copy raw</button>
+    </div>
+    ${preview}
+  `;
+  $("copyBodyBtn").addEventListener("click", copyResponseBody);
+}
+
+async function copyResponseBody(){
+  const btn = $("copyBodyBtn");
+  try{
+    await navigator.clipboard.writeText(state.responseBodyRaw || "");
+    btn.textContent = "Copied";
+    btn.classList.add("copied");
+    setTimeout(() => { btn.textContent = "Copy raw"; btn.classList.remove("copied"); }, 1500);
+  }catch(err){
+    appendLogEntry("error", `Copy failed: ${err.message || err}`);
+  }
+}
+window.copyResponseBody = copyResponseBody;
 
 appendLogEntry("info", "Inspector ready. Connect a wallet and send a request to begin.");
 </script>
