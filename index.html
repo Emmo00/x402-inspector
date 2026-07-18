@@ -872,6 +872,44 @@
         word-break: break-all;
       }
 
+      .response-preview {
+        margin-bottom: 12px;
+      }
+
+      .response-preview-label {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--text-faint);
+        margin-bottom: 6px;
+      }
+
+      .html-preview-frame {
+        width: 100%;
+        min-height: 260px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: #fff;
+      }
+
+      .pdf-preview-frame {
+        min-height: 420px;
+      }
+
+      .media-preview {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--panel-alt);
+      }
+
+      .media-preview-image {
+        object-fit: contain;
+      }
+
       .body-head {
         display: flex;
         align-items: center;
@@ -1290,9 +1328,16 @@
             <span>no request sent</span>
           </div>
         </div>
-        <div style="margin-top: 10px; text-align: center;">
+        <div style="margin-top: 10px; text-align: center">
           <span class="footer-credit"
-            >built by <a href="https://x.com/emmo0x00" target="_blank" rel="noopener noreferrer" style="text-decoration: underline;">Emmo00</a></span
+            >built by
+            <a
+              href="https://x.com/emmo0x00"
+              target="_blank"
+              rel="noopener noreferrer"
+              style="text-decoration: underline"
+              >Emmo00</a
+            ></span
           >
         </div>
       </footer>
@@ -1323,6 +1368,7 @@
         rootPayload: null, // the full parsed 402 body/header payload
         raw402: null, // { headers, bodyText } from the raw 402 response
         responseBodyRaw: "", // raw text of the last returned resource body
+        responsePreviewUrl: null,
         selectedIndex: 0,
         originalRequest: null, // { method, url, headers, body }
         exchanges: [], // [{ label, request, response }] for the Raw tab
@@ -1451,10 +1497,18 @@
         state.rootPayload = null;
         state.raw402 = null;
         state.responseBodyRaw = "";
+        clearResponsePreviewUrl();
         state.selectedIndex = 0;
         $("payBar")?.classList.remove("visible");
         renderEmptyRequirements();
         renderEmptyResponseBody();
+      }
+
+      function clearResponsePreviewUrl() {
+        if (state.responsePreviewUrl) {
+          URL.revokeObjectURL(state.responsePreviewUrl);
+          state.responsePreviewUrl = null;
+        }
       }
 
       function renderEmptyResponseBody() {
@@ -1702,10 +1756,10 @@
           resHeaders[k] = v;
         });
 
-        const bodyText = await res
-          .clone()
-          .text()
-          .catch(() => "");
+        const [bodyText, bodyBlob] = await Promise.all([
+          res.clone().text().catch(() => ""),
+          res.clone().blob().catch(() => null),
+        ]);
 
         renderResponseHeaders(resHeaders);
         logExchange("Initial request", state.originalRequest, {
@@ -1726,7 +1780,7 @@
           setPhase("Resource returned (no payment required)", "success");
           ["402", "parsed", "sign", "retry", "settled"].forEach((s) => setStepStatus(s, "skipped", ""));
           appendLogEntry("success", "Resource returned without a payment challenge.");
-          renderResponseBody(bodyText, resHeaders);
+          renderResponseBody(bodyText, resHeaders, bodyBlob);
           switchResTab("body");
         } else {
           setStatusChip(res.status, res.statusText || "Error", "error");
@@ -2072,10 +2126,10 @@
         res.headers.forEach((v, k) => {
           resHeaders[k] = v;
         });
-        const bodyText = await res
-          .clone()
-          .text()
-          .catch(() => "");
+        const [bodyText, bodyBlob] = await Promise.all([
+          res.clone().text().catch(() => ""),
+          res.clone().blob().catch(() => null),
+        ]);
 
         renderResponseHeaders(resHeaders);
         logExchange(
@@ -2097,7 +2151,7 @@
           setStatusChip(res.status, res.statusText || "OK", "success");
           setPhase("Settled — resource returned", "success");
           appendLogEntry("success", `Payment accepted. Server responded ${res.status}.`);
-          renderResponseBody(bodyText, resHeaders);
+          renderResponseBody(bodyText, resHeaders, bodyBlob);
           switchResTab("body");
         } else {
           setStepStatus("retry", "success", `${res.status} ${res.statusText}`);
@@ -2160,27 +2214,80 @@
         return text;
       }
 
-      function renderResponseBody(bodyText, headersObj) {
+      function renderResponseBody(bodyText, headersObj, bodyBlob = null) {
         const container = $("resPanelBody");
         const mime = (headersObj["content-type"] || "").split(";")[0].trim() || "unknown";
         state.responseBodyRaw = bodyText ?? "";
+        clearResponsePreviewUrl();
 
-        if (!bodyText) {
+        const hasBody = bodyBlob ? bodyBlob.size > 0 || !!bodyText : !!bodyText;
+
+        if (!hasBody) {
           container.innerHTML = `<div class="empty-state"><div class="glyph">ↆ</div><div>Empty response body</div><div class="hint">The server returned no body (content-type: ${escapeHtml(mime)}).</div></div>`;
           return;
         }
 
-        const bytes = new TextEncoder().encode(bodyText).length;
+        const bytes = bodyBlob ? bodyBlob.size : new TextEncoder().encode(bodyText).length;
         const sizeLabel = bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
 
         const isText =
           /^(text\/|application\/(json|xml|javascript|.*\+json|.*\+xml)|$)/.test(mime) || mime === "unknown";
-        let preview;
-        if (isText) {
+        let preview = "";
+        let rawBlock = "";
+
+        if (mime === "text/html") {
+          preview = `
+    <div class="response-preview">
+      <div class="response-preview-label">Rendered preview</div>
+      <iframe class="html-preview-frame" id="responseHtmlPreviewFrame" sandbox=""></iframe>
+    </div>
+  `;
+          rawBlock = `<pre class="raw-json" id="responseBodyPre">${escapeHtml(bodyText)}</pre>`;
+        } else if (mime.startsWith("image/") && bodyBlob) {
+          const previewUrl = URL.createObjectURL(bodyBlob);
+          state.responsePreviewUrl = previewUrl;
+          preview = `
+    <div class="response-preview">
+      <div class="response-preview-label">Rendered preview</div>
+      <img class="media-preview media-preview-image" src="${previewUrl}" alt="response preview" />
+    </div>
+  `;
+          rawBlock = `<pre class="raw-json">[${escapeHtml(mime)} — ${sizeLabel} of image data; use "Copy raw" to copy the text body]</pre>`;
+        } else if (mime === "application/pdf" && bodyBlob) {
+          const previewUrl = URL.createObjectURL(bodyBlob);
+          state.responsePreviewUrl = previewUrl;
+          preview = `
+    <div class="response-preview">
+      <div class="response-preview-label">Rendered preview</div>
+      <iframe class="html-preview-frame pdf-preview-frame" src="${previewUrl}" title="response preview"></iframe>
+    </div>
+  `;
+          rawBlock = `<pre class="raw-json">[${escapeHtml(mime)} — ${sizeLabel} of pdf data; use "Copy raw" to copy the text body]</pre>`;
+        } else if (mime.startsWith("video/") && bodyBlob) {
+          const previewUrl = URL.createObjectURL(bodyBlob);
+          state.responsePreviewUrl = previewUrl;
+          preview = `
+    <div class="response-preview">
+      <div class="response-preview-label">Rendered preview</div>
+      <video class="media-preview" controls src="${previewUrl}"></video>
+    </div>
+  `;
+          rawBlock = `<pre class="raw-json">[${escapeHtml(mime)} — ${sizeLabel} of video data; use "Copy raw" to copy the text body]</pre>`;
+        } else if (mime.startsWith("audio/") && bodyBlob) {
+          const previewUrl = URL.createObjectURL(bodyBlob);
+          state.responsePreviewUrl = previewUrl;
+          preview = `
+    <div class="response-preview">
+      <div class="response-preview-label">Rendered preview</div>
+      <audio class="media-preview" controls src="${previewUrl}"></audio>
+    </div>
+  `;
+          rawBlock = `<pre class="raw-json">[${escapeHtml(mime)} — ${sizeLabel} of audio data; use "Copy raw" to copy the text body]</pre>`;
+        } else if (isText) {
           const display = prettyMaybeJson(bodyText, mime);
-          preview = `<pre class="raw-json" id="responseBodyPre">${escapeHtml(display)}</pre>`;
+          rawBlock = `<pre class="raw-json" id="responseBodyPre">${escapeHtml(display)}</pre>`;
         } else {
-          preview = `<pre class="raw-json">[${escapeHtml(mime)} — ${sizeLabel} of binary data; use "Copy raw" to grab it]</pre>`;
+          rawBlock = `<pre class="raw-json">[${escapeHtml(mime)} — ${sizeLabel} of binary data; use "Copy raw" to grab it]</pre>`;
         }
 
         container.innerHTML = `
@@ -2192,7 +2299,15 @@
       <button class="btn-mini copy-btn" id="copyBodyBtn">Copy raw</button>
     </div>
     ${preview}
+    ${rawBlock}
   `;
+
+        if (mime === "text/html") {
+          const frame = $("responseHtmlPreviewFrame");
+          if (frame) {
+            frame.srcdoc = bodyText;
+          }
+        }
         $("copyBodyBtn").addEventListener("click", copyResponseBody);
       }
 
