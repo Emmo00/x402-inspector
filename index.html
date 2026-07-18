@@ -979,6 +979,9 @@ import {
   getBigInt
 } from "https://cdn.jsdelivr.net/npm/ethers@6/+esm";
 
+import { x402Client, x402HTTPClient } from "https://esm.sh/@x402/core@2.19.0/client";
+import { registerExactEvmScheme } from "https://esm.sh/@x402/evm@2.19.0/exact/client";
+
 /* ============================================================
    STATE
    ============================================================ */
@@ -988,6 +991,7 @@ const state = {
   chainIdDec: null,       // wallet's current chain id (decimal)
   accepts: [],            // parsed payment requirement options from the 402
   rootPayload: null,      // the full parsed 402 body/header payload
+  raw402: null,           // { headers, bodyText } from the raw 402 response
   selectedIndex: 0,
   originalRequest: null,  // { method, url, headers, body }
   exchanges: []           // [{ label, request, response }] for the Raw tab
@@ -1034,17 +1038,8 @@ function shortAddr(addr){
   return addr.slice(0, 6) + "…" + addr.slice(-4);
 }
 
-function b64EncodeUnicode(str){
-  return btoa(unescape(encodeURIComponent(str)));
-}
 function b64DecodeUnicode(str){
   return decodeURIComponent(escape(atob(str)));
-}
-
-function randomNonceHex(){
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return "0x" + Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 function caip2ChainId(network){
@@ -1116,6 +1111,7 @@ function resetFlow(){
   ["request","402","parsed","sign","retry","settled"].forEach(s => setStepStatus(s, "idle", ""));
   state.accepts = [];
   state.rootPayload = null;
+  state.raw402 = null;
   state.selectedIndex = 0;
   $("payBar")?.classList.remove("visible");
   renderEmptyRequirements();
@@ -1179,6 +1175,34 @@ function getEthProvider(){
     return null;
   }
   return new BrowserProvider(window.ethereum);
+}
+
+/*
+ * Adapt the connected injected wallet (via ethers) into the ClientEvmSigner
+ * shape the @x402 client expects: an address, an EIP-712 signer, and a
+ * read-only contract caller for extension enrichment / balance reads.
+ */
+async function makeX402Signer(){
+  const provider = getEthProvider();
+  if(!provider) throw new Error("no injected wallet");
+  const signer = await provider.getSigner();
+  const address = await signer.getAddress();
+  return {
+    address,
+    async signTypedData({ domain, types, primaryType, message }){
+      // ethers derives primaryType itself and rejects an EIP712Domain entry.
+      const t = { ...types };
+      delete t.EIP712Domain;
+      return signer.signTypedData(domain, t, message);
+    },
+    async readContract({ address: to, abi, functionName, args = [] }){
+      const iface = new Interface(abi);
+      const data = iface.encodeFunctionData(functionName, args);
+      const result = await provider.call({ to, data });
+      const decoded = iface.decodeFunctionResult(functionName, result);
+      return decoded.length === 1 ? decoded[0] : decoded;
+    }
+  };
 }
 
 async function connectWallet(){
@@ -1321,6 +1345,7 @@ async function sendRequest(){
   logExchange("Initial request", state.originalRequest, { status: res.status, headers: resHeaders, body: bodyText });
 
   if(res.status === 402){
+    state.raw402 = { headers: resHeaders, bodyText };
     setStatusChip(res.status, "Payment Required", "amber");
     setPhase("Awaiting payment", "amber");
     setStepStatus("402", "success", res.statusText || "Payment Required");
@@ -1468,11 +1493,9 @@ function renderRequirements(accepts){
 
     <div class="pay-bar visible" id="payBar">
       <div class="pay-bar-row">
-        <label style="font-family:var(--mono); font-size:11.5px; color:var(--text-dim);">Payment header:</label>
-        <select id="paymentHeaderName">
-          <option value="PAYMENT-SIGNATURE">PAYMENT-SIGNATURE (v2)</option>
-          <option value="X-PAYMENT">X-PAYMENT (legacy v1)</option>
-        </select>
+        <span style="font-family:var(--mono); font-size:11.5px; color:var(--text-dim);">
+          Payload &amp; header built by the official <code>@x402</code> client (auto-selects v1/v2).
+        </span>
         <button class="btn btn-primary" id="signPayBtn">Sign &amp; retry with payment</button>
       </div>
       <div class="warning">Signing authorizes a real transfer of the exact amount shown above from your connected wallet. Only sign for endpoints you trust.</div>
@@ -1554,9 +1577,8 @@ async function signAndRetry(){
     appendLogEntry("error", "No payment option selected.");
     return;
   }
-  if(!req.asset || !req.amount || !req.payTo){
-    setStepStatus("sign", "error", "selected option is missing asset/amount/payTo");
-    appendLogEntry("error", "Selected payment option is missing asset, amount, or payTo — cannot build a signature for it.");
+  if(!state.raw402){
+    appendLogEntry("error", "No stored 402 response to build a payment from — send the request again.");
     return;
   }
 
@@ -1564,7 +1586,7 @@ async function signAndRetry(){
   setStepStatus("sign", "pending", "");
   setPhase("Waiting for wallet signature", "amber");
 
-  // Switch network if needed
+  // Switch network if needed so the wallet signs against the right chain.
   if(reqChainId !== null && reqChainId !== state.chainIdDec){
     appendLogEntry("warn", `Wallet is on chain ${state.chainIdDec}, option requires ${reqChainId}. Requesting network switch…`);
     try{
@@ -1580,43 +1602,40 @@ async function signAndRetry(){
     }
   }
 
-  const provider = getEthProvider();
-  if(!provider) return;
+  // Build an x402 client backed by the connected wallet. The selector honors
+  // the option the user picked in the requirements table.
+  let httpClient, paymentRequired, paymentPayload, encodedHeaders;
+  try{
+    const signer = await makeX402Signer();
+    const selectRequirements = (_version, options) => {
+      const match = options.find(o =>
+        o.network === req.network &&
+        (o.payTo || o.pay_to) === req.payTo &&
+        (o.asset || "") === (req.asset || "")
+      );
+      return match || options[state.selectedIndex] || options[0];
+    };
+    const client = new x402Client(selectRequirements);
+    registerExactEvmScheme(client, { signer });
+    httpClient = new x402HTTPClient(client);
 
-  let signature;
-  const validAfter = 0;
-  const validBefore = Math.floor(Date.now() / 1000) + (req.maxTimeoutSeconds || 60);
-  const nonce = randomNonceHex();
-
-  const domain = {
-    name: req.extra?.name || "USD Coin",
-    version: req.extra?.version || "2",
-    chainId: reqChainId,
-    verifyingContract: req.asset
-  };
-  const types = {
-    TransferWithAuthorization: [
-      { name: "from", type: "address" },
-      { name: "to", type: "address" },
-      { name: "value", type: "uint256" },
-      { name: "validAfter", type: "uint256" },
-      { name: "validBefore", type: "uint256" },
-      { name: "nonce", type: "bytes32" }
-    ]
-  };
-  const message = {
-    from: state.account,
-    to: req.payTo,
-    value: req.amount,
-    validAfter,
-    validBefore,
-    nonce
-  };
+    // Let the library parse the raw 402 (header first, body fallback) into its
+    // own PaymentRequired type — this is what fixes the v1/v2 payload mismatch.
+    const getHeader = (name) => state.raw402.headers[name.toLowerCase()] ?? null;
+    let parsedBody;
+    try{ parsedBody = JSON.parse(state.raw402.bodyText); }catch{ parsedBody = undefined; }
+    paymentRequired = httpClient.getPaymentRequiredResponse(getHeader, parsedBody);
+  }catch(err){
+    setStepStatus("sign", "error", err.message || "could not parse 402");
+    setPhase("Could not build payment", "error");
+    appendLogEntry("error", `Failed to prepare payment: ${err.message || err}`);
+    return;
+  }
 
   try{
-    const signer = await provider.getSigner();
-    appendLogEntry("info", "Requesting EIP-712 signature (TransferWithAuthorization) from wallet…");
-    signature = await signer.signTypedData(domain, types, message);
+    appendLogEntry("info", "Requesting EIP-712 signature from wallet via @x402 client…");
+    paymentPayload = await httpClient.createPaymentPayload(paymentRequired);
+    encodedHeaders = httpClient.encodePaymentSignatureHeader(paymentPayload);
   }catch(err){
     setStepStatus("sign", "error", err.message || "user rejected or signing failed");
     setPhase("Signature rejected", "error");
@@ -1625,33 +1644,13 @@ async function signAndRetry(){
   }
 
   setStepStatus("sign", "success", "signature obtained");
-  appendLogEntry("success", "Wallet returned a signature.");
-
-  const paymentPayload = {
-    x402Version: req.x402Version || 1,
-    scheme: req.scheme || "exact",
-    network: req.network,
-    payload: {
-      signature,
-      authorization: {
-        from: state.account,
-        to: req.payTo,
-        value: String(req.amount),
-        validAfter: String(validAfter),
-        validBefore: String(validBefore),
-        nonce
-      }
-    }
-  };
-
-  const encodedPayload = b64EncodeUnicode(JSON.stringify(paymentPayload));
-  const headerName = $("paymentHeaderName").value;
+  appendLogEntry("success", "Wallet returned a signature; payment header built by @x402.");
 
   setStepStatus("retry", "pending", "");
   setPhase("Retrying request with payment", "amber");
-  appendLogEntry("info", `Retrying original request with ${headerName} header…`);
+  appendLogEntry("info", `Retrying original request with ${Object.keys(encodedHeaders).join(", ")} header…`);
 
-  const retryHeaders = { ...state.originalRequest.headers, [headerName]: encodedPayload };
+  const retryHeaders = { ...state.originalRequest.headers, ...encodedHeaders };
   const retryOpts = { method: state.originalRequest.method, headers: retryHeaders };
   if(state.originalRequest.body !== undefined) retryOpts.body = state.originalRequest.body;
 
@@ -1676,12 +1675,11 @@ async function signAndRetry(){
 
   if(res.ok){
     setStepStatus("retry", "success", `${res.status} ${res.statusText}`);
-    const settlement = resHeaders["payment-response"];
     let settlementMeta = "resource returned";
-    if(settlement){
-      try{ settlementMeta = JSON.stringify(JSON.parse(b64DecodeUnicode(settlement))); }
-      catch{ settlementMeta = "settlement info present but undecodable"; }
-    }
+    try{
+      const settle = httpClient.getPaymentSettleResponse((n) => resHeaders[n.toLowerCase()] ?? null);
+      if(settle) settlementMeta = JSON.stringify(settle);
+    }catch{ /* no settlement header */ }
     setStepStatus("settled", "success", settlementMeta);
     setStatusChip(res.status, res.statusText || "OK", "success");
     setPhase("Settled — resource returned", "success");
@@ -1691,7 +1689,12 @@ async function signAndRetry(){
     setStepStatus("settled", "error", `server rejected payment: ${res.status}`);
     setStatusChip(res.status, res.statusText || "Rejected", "error");
     setPhase("Payment rejected by server", "error");
-    appendLogEntry("error", `Server rejected the payment attempt: ${res.status} ${res.statusText}.`);
+    let reason = "";
+    try{
+      const pr = httpClient.getPaymentRequiredResponse((n) => resHeaders[n.toLowerCase()] ?? null, JSON.parse(bodyText));
+      if(pr?.error) reason = ` — ${pr.error}`;
+    }catch{ /* ignore */ }
+    appendLogEntry("error", `Server rejected the payment attempt: ${res.status} ${res.statusText}${reason}.`);
   }
 }
 
