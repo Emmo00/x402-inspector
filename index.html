@@ -1,0 +1,1729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>402.inspector — x402 protocol debugger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e0f;
+    --bg-grid: rgba(240,168,45,0.028);
+    --panel:#111718;
+    --panel-alt:#151c1e;
+    --border:#212a2c;
+    --border-soft:#1a2224;
+    --text:#e7edee;
+    --text-dim:#8a9698;
+    --text-faint:#4d5a5c;
+    --amber:#f0a82d;
+    --amber-dim:#7a5c22;
+    --teal:#33d6ae;
+    --teal-dim:#1d5a4c;
+    --red:#ff6161;
+    --red-dim:#6b2b2b;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+    --sans: 'IBM Plex Sans', system-ui, sans-serif;
+    --radius: 3px;
+  }
+
+  *{ box-sizing:border-box; }
+
+  html,body{
+    margin:0;
+    padding:0;
+    background:
+      linear-gradient(var(--bg-grid) 1px, transparent 1px) 0 0/100% 24px,
+      linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px) 0 0/24px 100%,
+      var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;
+  }
+
+  ::selection{ background:var(--amber); color:#0a0e0f; }
+
+  :focus-visible{
+    outline:2px solid var(--amber);
+    outline-offset:2px;
+  }
+
+  button{ font-family:inherit; }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration:0.001ms !important; transition-duration:0.001ms !important; }
+  }
+
+  /* ---------- layout shell ---------- */
+
+  .app{
+    max-width:1320px;
+    margin:0 auto;
+    padding:20px 24px 40px;
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+  }
+
+  /* ---------- topbar ---------- */
+
+  .topbar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:14px 18px;
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    background:var(--panel);
+  }
+
+  .brand{
+    display:flex;
+    align-items:baseline;
+    gap:10px;
+  }
+
+  .brand-mark{
+    font-family:var(--mono);
+    font-weight:700;
+    font-size:17px;
+    letter-spacing:-0.02em;
+    color:var(--text);
+  }
+  .brand-mark span{ color:var(--amber); }
+
+  .brand-tagline{
+    font-family:var(--mono);
+    font-size:11px;
+    color:var(--text-faint);
+    letter-spacing:0.04em;
+    text-transform:uppercase;
+  }
+
+  .wallet-widget{
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+
+  .wallet-chip{
+    display:none;
+    align-items:center;
+    gap:8px;
+    padding:7px 12px;
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    background:var(--panel-alt);
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--text-dim);
+  }
+  .wallet-chip.connected{ display:flex; }
+  .wallet-chip .dot{
+    width:6px; height:6px; border-radius:50%;
+    background:var(--teal);
+    box-shadow:0 0 0 3px rgba(51,214,174,0.15);
+  }
+  .wallet-chip .addr{ color:var(--text); }
+
+  .btn{
+    font-family:var(--mono);
+    font-size:12px;
+    font-weight:500;
+    letter-spacing:0.01em;
+    padding:9px 16px;
+    border-radius:var(--radius);
+    border:1px solid var(--border);
+    background:transparent;
+    color:var(--text);
+    cursor:pointer;
+    transition:border-color 0.15s ease, background 0.15s ease;
+  }
+  .btn:hover{ border-color:var(--text-faint); background:var(--panel-alt); }
+  .btn:disabled{ opacity:0.4; cursor:not-allowed; }
+
+  .btn-primary{
+    background:var(--amber);
+    border-color:var(--amber);
+    color:#1a1204;
+    font-weight:600;
+  }
+  .btn-primary:hover{ background:#f7b750; border-color:#f7b750; }
+  .btn-primary:disabled{ background:var(--amber); border-color:var(--amber); opacity:0.35; }
+
+  .btn-ghost{
+    border-color:transparent;
+    color:var(--text-dim);
+    padding:9px 10px;
+  }
+  .btn-ghost:hover{ color:var(--text); background:var(--panel-alt); }
+
+  .btn-danger-outline{
+    border-color:var(--red-dim);
+    color:var(--red);
+  }
+  .btn-danger-outline:hover{ background:rgba(255,97,97,0.08); border-color:var(--red); }
+
+  .btn-mini{
+    font-family:var(--mono);
+    font-size:10.5px;
+    padding:5px 9px;
+    border-radius:var(--radius);
+    border:1px solid var(--border);
+    background:var(--panel-alt);
+    color:var(--text-dim);
+    cursor:pointer;
+    white-space:nowrap;
+  }
+  .btn-mini:hover{ color:var(--text); border-color:var(--text-faint); }
+  .btn-mini:disabled{ opacity:0.35; cursor:not-allowed; }
+
+  /* ---------- request bar ---------- */
+
+  .request-card{
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    background:var(--panel);
+    overflow:hidden;
+  }
+
+  .request-row{
+    display:flex;
+    gap:0;
+    align-items:stretch;
+    border-bottom:1px solid var(--border);
+  }
+
+  .method-select{
+    font-family:var(--mono);
+    font-weight:700;
+    font-size:12px;
+    letter-spacing:0.03em;
+    color:var(--amber);
+    background:var(--panel-alt);
+    border:none;
+    border-right:1px solid var(--border);
+    padding:0 14px;
+    min-width:96px;
+    cursor:pointer;
+  }
+
+  .url-input{
+    flex:1;
+    font-family:var(--mono);
+    font-size:13px;
+    color:var(--text);
+    background:transparent;
+    border:none;
+    padding:0 14px;
+    min-width:0;
+  }
+  .url-input::placeholder{ color:var(--text-faint); }
+  .url-input:focus{ outline:none; }
+  .url-input:focus-visible{ outline:none; box-shadow:inset 0 -2px 0 var(--amber); }
+
+  .send-btn{
+    font-family:var(--mono);
+    font-size:12px;
+    font-weight:700;
+    letter-spacing:0.03em;
+    padding:0 22px;
+    background:var(--amber);
+    color:#1a1204;
+    border:none;
+    cursor:pointer;
+    white-space:nowrap;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    transition:background 0.15s ease;
+  }
+  .send-btn:hover{ background:#f7b750; }
+  .send-btn:active{ background:#d9911c; }
+  .send-btn:disabled{ opacity:0.5; cursor:not-allowed; background:var(--amber); }
+
+  .cors-hint{
+    font-family:var(--mono);
+    font-size:10.5px;
+    color:var(--text-faint);
+    padding:8px 14px;
+    border-bottom:1px solid var(--border-soft);
+    background:var(--panel-alt);
+  }
+
+  .request-tabs{
+    display:flex;
+    gap:2px;
+    padding:0 10px;
+    border-bottom:1px solid var(--border-soft);
+  }
+
+  .req-tab-btn{
+    background:none;
+    border:none;
+    padding:10px 12px;
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:0.02em;
+    color:var(--text-faint);
+    cursor:pointer;
+    border-bottom:2px solid transparent;
+    display:flex;
+    align-items:center;
+    gap:6px;
+  }
+  .req-tab-btn:hover{ color:var(--text-dim); }
+  .req-tab-btn.active{ color:var(--text); border-bottom-color:var(--amber); }
+  .req-tab-btn .count{
+    font-size:10px;
+    color:var(--text-faint);
+    background:var(--panel-alt);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:0 6px;
+    line-height:15px;
+  }
+
+  .req-panel{ display:none; padding:14px; }
+  .req-panel.active{ display:block; }
+
+  .kv-row{
+    display:grid;
+    grid-template-columns:1fr 1fr 32px;
+    gap:8px;
+    margin-bottom:8px;
+  }
+  .kv-row input{
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--text);
+    background:var(--panel-alt);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:8px 10px;
+    width:100%;
+  }
+  .kv-row input::placeholder{ color:var(--text-faint); }
+  .kv-row input:focus{ outline:none; border-color:var(--amber-dim); }
+
+  .kv-remove{
+    background:var(--panel-alt);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    color:var(--text-faint);
+    cursor:pointer;
+    font-size:14px;
+    line-height:1;
+  }
+  .kv-remove:hover{ color:var(--red); border-color:var(--red-dim); }
+
+  .add-row-btn{
+    font-family:var(--mono);
+    font-size:11.5px;
+    color:var(--text-dim);
+    background:none;
+    border:1px dashed var(--border);
+    border-radius:var(--radius);
+    padding:7px 12px;
+    cursor:pointer;
+    width:100%;
+    text-align:left;
+  }
+  .add-row-btn:hover{ color:var(--amber); border-color:var(--amber-dim); }
+
+  .body-textarea{
+    width:100%;
+    min-height:110px;
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--text);
+    background:var(--panel-alt);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:10px;
+    resize:vertical;
+  }
+  .body-textarea::placeholder{ color:var(--text-faint); }
+  .body-textarea:focus{ outline:none; border-color:var(--amber-dim); }
+
+  /* ---------- workspace grid ---------- */
+
+  .workspace{
+    display:grid;
+    grid-template-columns:300px 1fr;
+    gap:16px;
+    align-items:start;
+  }
+
+  .panel-title{
+    font-family:var(--mono);
+    font-size:11px;
+    font-weight:600;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    color:var(--text-faint);
+    padding:14px 16px 10px;
+  }
+
+  /* ---------- flow / stepper (signature element) ---------- */
+
+  .flow-panel{
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    background:var(--panel);
+  }
+
+  .stepper{
+    list-style:none;
+    margin:0;
+    padding:4px 16px 16px;
+  }
+
+  .step{
+    position:relative;
+    display:flex;
+    gap:12px;
+    padding:10px 0;
+  }
+
+  .step:not(:last-child)::before{
+    content:"";
+    position:absolute;
+    left:9px;
+    top:28px;
+    bottom:-4px;
+    width:1px;
+    background:var(--border);
+  }
+
+  .step-dot-wrap{
+    position:relative;
+    z-index:1;
+    flex-shrink:0;
+    width:20px;
+    height:20px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+
+  .step-dot{
+    width:9px;
+    height:9px;
+    border-radius:50%;
+    background:var(--panel-alt);
+    border:1.5px solid var(--text-faint);
+  }
+
+  .step[data-status="success"] .step-dot{
+    background:var(--teal);
+    border-color:var(--teal);
+    box-shadow:0 0 0 3px rgba(51,214,174,0.15);
+  }
+  .step[data-status="pending"] .step-dot{
+    background:var(--amber);
+    border-color:var(--amber);
+    box-shadow:0 0 0 3px rgba(240,168,45,0.18);
+    animation:pulse 1.4s ease-in-out infinite;
+  }
+  .step[data-status="error"] .step-dot{
+    background:var(--red);
+    border-color:var(--red);
+    box-shadow:0 0 0 3px rgba(255,97,97,0.15);
+  }
+  .step[data-status="skipped"] .step-dot{
+    background:var(--panel-alt);
+    border-color:var(--border);
+  }
+
+  @keyframes pulse{
+    0%,100%{ opacity:1; }
+    50%{ opacity:0.45; }
+  }
+
+  .step-body{ flex:1; min-width:0; padding-top:1px; }
+
+  .step-index{
+    font-family:var(--mono);
+    font-size:10px;
+    color:var(--text-faint);
+    letter-spacing:0.05em;
+  }
+
+  .step-label{
+    font-family:var(--mono);
+    font-size:12.5px;
+    color:var(--text-dim);
+    margin-top:1px;
+  }
+  .step[data-status="success"] .step-label{ color:var(--text); }
+  .step[data-status="pending"] .step-label{ color:var(--text); }
+  .step[data-status="error"] .step-label{ color:var(--red); }
+  .step[data-status="skipped"] .step-label{ color:var(--text-faint); }
+
+  .step-meta{
+    font-family:var(--mono);
+    font-size:10.5px;
+    color:var(--text-faint);
+    margin-top:3px;
+    display:none;
+    word-break:break-all;
+  }
+  .step[data-status="success"] .step-meta,
+  .step[data-status="error"] .step-meta{ display:block; }
+
+  .flow-divider{
+    height:1px;
+    background:var(--border);
+    margin:0 16px;
+  }
+
+  .wallet-panel{ padding:14px 16px 16px; }
+
+  .wallet-field{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:7px 0;
+    font-family:var(--mono);
+    font-size:11.5px;
+    border-bottom:1px solid var(--border-soft);
+    gap:10px;
+  }
+  .wallet-field:last-child{ border-bottom:none; }
+  .wallet-field .k{ color:var(--text-faint); flex-shrink:0; }
+  .wallet-field .v{ color:var(--text-dim); text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .wallet-field .v.filled{ color:var(--text); }
+
+  /* ---------- response panel ---------- */
+
+  .response-panel{
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    background:var(--panel);
+    min-height:520px;
+    display:flex;
+    flex-direction:column;
+  }
+
+  .response-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:12px 16px;
+    border-bottom:1px solid var(--border);
+    flex-wrap:wrap;
+    gap:10px;
+  }
+
+  .status-chip{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-family:var(--mono);
+    font-size:12px;
+  }
+
+  .status-chip .dot{
+    width:7px; height:7px; border-radius:50%;
+    background:var(--text-faint);
+  }
+
+  .status-code{
+    font-weight:700;
+    color:var(--text-faint);
+  }
+
+  .status-text{ color:var(--text-faint); }
+
+  .response-tabs{
+    display:flex;
+    gap:2px;
+    padding:0 10px;
+    border-bottom:1px solid var(--border-soft);
+    overflow-x:auto;
+  }
+
+  .res-tab-btn{
+    background:none;
+    border:none;
+    padding:11px 14px;
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:0.02em;
+    color:var(--text-faint);
+    cursor:pointer;
+    border-bottom:2px solid transparent;
+    white-space:nowrap;
+  }
+  .res-tab-btn:hover{ color:var(--text-dim); }
+  .res-tab-btn.active{ color:var(--text); border-bottom-color:var(--amber); }
+
+  .res-panel{ display:none; flex:1; padding:16px; overflow:auto; }
+  .res-panel.active{ display:block; }
+
+  .empty-state{
+    height:100%;
+    min-height:280px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:10px;
+    color:var(--text-faint);
+    font-family:var(--mono);
+    font-size:12px;
+    text-align:center;
+    padding:20px;
+  }
+  .empty-state .glyph{
+    font-size:22px;
+    color:var(--border);
+    border:1px solid var(--border);
+    width:44px; height:44px;
+    display:flex; align-items:center; justify-content:center;
+    border-radius:var(--radius);
+  }
+  .empty-state .hint{ max-width:320px; line-height:1.5; }
+
+  table.data-table{
+    width:100%;
+    border-collapse:collapse;
+    font-family:var(--mono);
+    font-size:12px;
+  }
+  table.data-table th{
+    text-align:left;
+    color:var(--text-faint);
+    font-weight:500;
+    font-size:10.5px;
+    letter-spacing:0.05em;
+    text-transform:uppercase;
+    padding:8px 10px;
+    border-bottom:1px solid var(--border);
+  }
+  table.data-table td{
+    padding:9px 10px;
+    color:var(--text-dim);
+    border-bottom:1px solid var(--border-soft);
+    vertical-align:top;
+  }
+  table.data-table tr:last-child td{ border-bottom:none; }
+  table.data-table .k{ color:var(--text-faint); white-space:nowrap; }
+  table.data-table .mono-val{ color:var(--text); word-break:break-all; }
+
+  .req-option-row td{ cursor:pointer; }
+  .req-option-row:hover td{ color:var(--text); }
+  .req-option-row input[type="radio"]{ accent-color:var(--amber); }
+
+  .balance-line{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    margin-top:4px;
+  }
+  .balance-line .val{ color:var(--teal); font-size:11px; }
+  .balance-line .val.err{ color:var(--red); }
+
+  .pay-bar{
+    display:none;
+    margin-top:14px;
+    padding:14px;
+    border:1px solid var(--amber-dim);
+    border-radius:var(--radius);
+    background:rgba(240,168,45,0.05);
+  }
+  .pay-bar.visible{ display:block; }
+  .pay-bar-row{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    flex-wrap:wrap;
+  }
+  .pay-bar select{
+    font-family:var(--mono);
+    font-size:11.5px;
+    color:var(--text);
+    background:var(--panel-alt);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:7px 10px;
+  }
+  .pay-bar .warning{
+    font-family:var(--mono);
+    font-size:10.5px;
+    color:var(--amber);
+    margin-top:9px;
+    line-height:1.5;
+  }
+
+  .raw-block{
+    margin-bottom:14px;
+  }
+  .raw-block-label{
+    font-family:var(--mono);
+    font-size:10.5px;
+    letter-spacing:0.05em;
+    text-transform:uppercase;
+    color:var(--text-faint);
+    margin-bottom:6px;
+  }
+
+  pre.raw-json{
+    margin:0;
+    font-family:var(--mono);
+    font-size:12px;
+    line-height:1.6;
+    color:var(--text-dim);
+    background:var(--panel-alt);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:14px;
+    overflow:auto;
+    white-space:pre-wrap;
+    word-break:break-all;
+  }
+
+  .log-list{
+    list-style:none;
+    margin:0;
+    padding:0;
+    font-family:var(--mono);
+    font-size:12px;
+  }
+  .log-entry{
+    display:grid;
+    grid-template-columns:76px 90px 1fr;
+    gap:10px;
+    padding:7px 0;
+    border-bottom:1px solid var(--border-soft);
+    color:var(--text-dim);
+  }
+  .log-entry .ts{ color:var(--text-faint); }
+  .log-entry .lvl{
+    font-size:10px;
+    letter-spacing:0.04em;
+    text-transform:uppercase;
+    align-self:start;
+  }
+  .log-entry[data-level="info"] .lvl{ color:var(--text-faint); }
+  .log-entry[data-level="success"] .lvl{ color:var(--teal); }
+  .log-entry[data-level="warn"] .lvl{ color:var(--amber); }
+  .log-entry[data-level="error"] .lvl{ color:var(--red); }
+
+  /* ---------- footer status bar ---------- */
+
+  .statusbar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:10px 16px;
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    background:var(--panel);
+    font-family:var(--mono);
+    font-size:11px;
+    color:var(--text-faint);
+  }
+
+  .statusbar .phase{
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .statusbar .phase .dot{
+    width:6px; height:6px; border-radius:50%;
+    background:var(--text-faint);
+  }
+
+  /* ---------- responsive ---------- */
+
+  @media (max-width:860px){
+    .workspace{ grid-template-columns:1fr; }
+    .app{ padding:14px 14px 32px; }
+    .topbar{ flex-wrap:wrap; gap:10px; }
+    .request-row{ flex-wrap:wrap; }
+    .method-select{ border-right:none; border-bottom:1px solid var(--border); width:100%; padding:10px 14px; }
+    .url-input{ padding:10px 14px; width:100%; }
+    .send-btn{ width:100%; justify-content:center; padding:12px; }
+    .log-entry{ grid-template-columns:64px 1fr; }
+    .log-entry .lvl{ grid-column:1 / -1; order:2; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ============ TOPBAR ============ -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">402<span>.inspector</span></div>
+      <div class="brand-tagline">x402 protocol debugger</div>
+    </div>
+
+    <div class="wallet-widget">
+      <div class="wallet-chip" id="walletChip">
+        <span class="dot"></span>
+        <span class="addr" id="walletChipAddr">0x0000…0000</span>
+      </div>
+      <button class="btn btn-primary" id="connectWalletBtn" onclick="connectWallet()">Connect wallet</button>
+    </div>
+  </header>
+
+  <!-- ============ REQUEST CARD ============ -->
+  <section class="request-card">
+    <div class="request-row">
+      <select class="method-select" id="methodSelect">
+        <option>GET</option>
+        <option>POST</option>
+        <option>PUT</option>
+        <option>DELETE</option>
+      </select>
+      <input
+        type="text"
+        class="url-input"
+        id="urlInput"
+        placeholder="https://api.example.com/weather"
+        autocomplete="off"
+        spellcheck="false"
+      >
+      <button class="send-btn" id="sendBtn" onclick="sendRequest()">
+        Send request
+      </button>
+    </div>
+
+    <div class="cors-hint">
+      Requests are routed through the local proxy (<code>/proxy</code>) — the target endpoint is contacted server-side, so CORS never applies and all response headers are visible.
+    </div>
+
+    <div class="request-tabs">
+      <button class="req-tab-btn active" data-req-tab="headers" onclick="switchReqTab('headers')">
+        Headers <span class="count" id="headerCount">0</span>
+      </button>
+      <button class="req-tab-btn" data-req-tab="body" onclick="switchReqTab('body')">
+        Body
+      </button>
+    </div>
+
+    <div class="req-panel active" data-req-panel="headers" id="reqPanelHeaders">
+      <div id="headerRows"></div>
+      <button class="add-row-btn" onclick="addHeaderRow()">+ Add header</button>
+    </div>
+
+    <div class="req-panel" data-req-panel="body" id="reqPanelBody">
+      <textarea class="body-textarea" id="bodyInput" placeholder="{ }" spellcheck="false"></textarea>
+    </div>
+  </section>
+
+  <!-- ============ WORKSPACE ============ -->
+  <main class="workspace">
+
+    <!-- ---- left: payment flow + wallet ---- -->
+    <aside class="flow-panel">
+      <div class="panel-title">Payment flow</div>
+
+      <ol class="stepper" id="stepper">
+        <li class="step" data-status="idle" data-step="request">
+          <div class="step-dot-wrap"><span class="step-dot"></span></div>
+          <div class="step-body">
+            <div class="step-index">01</div>
+            <div class="step-label">Request sent</div>
+            <div class="step-meta"></div>
+          </div>
+        </li>
+        <li class="step" data-status="idle" data-step="402">
+          <div class="step-dot-wrap"><span class="step-dot"></span></div>
+          <div class="step-body">
+            <div class="step-index">02</div>
+            <div class="step-label">402 Payment Required</div>
+            <div class="step-meta"></div>
+          </div>
+        </li>
+        <li class="step" data-status="idle" data-step="parsed">
+          <div class="step-dot-wrap"><span class="step-dot"></span></div>
+          <div class="step-body">
+            <div class="step-index">03</div>
+            <div class="step-label">Requirements parsed</div>
+            <div class="step-meta"></div>
+          </div>
+        </li>
+        <li class="step" data-status="idle" data-step="sign">
+          <div class="step-dot-wrap"><span class="step-dot"></span></div>
+          <div class="step-body">
+            <div class="step-index">04</div>
+            <div class="step-label">Wallet signs payload</div>
+            <div class="step-meta"></div>
+          </div>
+        </li>
+        <li class="step" data-status="idle" data-step="retry">
+          <div class="step-dot-wrap"><span class="step-dot"></span></div>
+          <div class="step-body">
+            <div class="step-index">05</div>
+            <div class="step-label">Request retried w/ payment</div>
+            <div class="step-meta"></div>
+          </div>
+        </li>
+        <li class="step" data-status="idle" data-step="settled">
+          <div class="step-dot-wrap"><span class="step-dot"></span></div>
+          <div class="step-body">
+            <div class="step-index">06</div>
+            <div class="step-label">Settled — resource returned</div>
+            <div class="step-meta"></div>
+          </div>
+        </li>
+      </ol>
+
+      <div class="flow-divider"></div>
+
+      <div class="wallet-panel">
+        <div class="panel-title" style="padding:0 0 8px;">Wallet</div>
+        <div class="wallet-field">
+          <span class="k">status</span>
+          <span class="v" id="walletStatus">not connected</span>
+        </div>
+        <div class="wallet-field">
+          <span class="k">address</span>
+          <span class="v" id="walletAddress">—</span>
+        </div>
+        <div class="wallet-field">
+          <span class="k">network</span>
+          <span class="v" id="walletNetwork">—</span>
+        </div>
+        <div class="wallet-field">
+          <span class="k">balance</span>
+          <span class="v" id="walletBalance">—</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ---- right: response inspector ---- -->
+    <section class="response-panel">
+      <div class="response-header">
+        <div class="status-chip">
+          <span class="dot" id="statusDot"></span>
+          <span class="status-code" id="statusCode">—</span>
+          <span class="status-text" id="statusText">Awaiting request</span>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-ghost" onclick="clearLog()">Clear log</button>
+        </div>
+      </div>
+
+      <div class="response-tabs">
+        <button class="res-tab-btn active" data-res-tab="headers" onclick="switchResTab('headers')">Response headers</button>
+        <button class="res-tab-btn" data-res-tab="requirements" onclick="switchResTab('requirements')">Payment requirements</button>
+        <button class="res-tab-btn" data-res-tab="raw" onclick="switchResTab('raw')">Raw</button>
+        <button class="res-tab-btn" data-res-tab="log" onclick="switchResTab('log')">Console log</button>
+      </div>
+
+      <div class="res-panel active" data-res-panel="headers" id="resPanelHeaders">
+        <div class="empty-state">
+          <div class="glyph">⌁</div>
+          <div>No response yet</div>
+          <div class="hint">Enter an x402-protected endpoint above and send a request to see response headers here.</div>
+        </div>
+      </div>
+
+      <div class="res-panel" data-res-panel="requirements" id="resPanelRequirements">
+        <div class="empty-state">
+          <div class="glyph">$</div>
+          <div>No payment requirements parsed</div>
+          <div class="hint">Once the endpoint returns a 402, the parsed <code>accepts</code> array will be listed here — scheme, network, asset, amount, and payTo per option.</div>
+        </div>
+      </div>
+
+      <div class="res-panel" data-res-panel="raw" id="resPanelRaw">
+        <div class="empty-state">
+          <div class="glyph">{ }</div>
+          <div>Nothing to show</div>
+          <div class="hint">The full request/response cycle — including 402 and retry — will appear here as JSON.</div>
+        </div>
+      </div>
+
+      <div class="res-panel" data-res-panel="log" id="resPanelLog">
+        <ul class="log-list" id="logList">
+          <li class="log-entry" data-level="info">
+            <span class="ts">00:00:00</span>
+            <span class="lvl">info</span>
+            <span>Inspector ready. Waiting for a request.</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ============ FOOTER STATUS BAR ============ -->
+  <footer class="statusbar">
+    <div class="phase">
+      <span class="dot" id="phaseDot"></span>
+      <span id="phaseText">Idle</span>
+    </div>
+    <div id="footerMeta">no request sent</div>
+  </footer>
+
+</div>
+
+<script type="module">
+import {
+  BrowserProvider,
+  Interface,
+  formatEther,
+  formatUnits,
+  hexlify,
+  toBeHex,
+  getBigInt
+} from "https://cdn.jsdelivr.net/npm/ethers@6/+esm";
+
+/* ============================================================
+   STATE
+   ============================================================ */
+
+const state = {
+  account: null,          // connected wallet address
+  chainIdDec: null,       // wallet's current chain id (decimal)
+  accepts: [],            // parsed payment requirement options from the 402
+  rootPayload: null,      // the full parsed 402 body/header payload
+  selectedIndex: 0,
+  originalRequest: null,  // { method, url, headers, body }
+  exchanges: []           // [{ label, request, response }] for the Raw tab
+};
+
+const ERC20_IFACE = new Interface([
+  "function balanceOf(address) view returns (uint256)",
+  "function decimals() view returns (uint8)"
+]);
+
+const CHAIN_NAMES = {
+  1: "Ethereum",
+  137: "Polygon",
+  8453: "Base",
+  84532: "Base Sepolia",
+  42161: "Arbitrum One",
+  42220: "Celo",
+  43114: "Avalanche"
+};
+
+/* ============================================================
+   SMALL UTILITIES
+   ============================================================ */
+
+function $(id){ return document.getElementById(id); }
+
+/*
+ * Route every upstream request through the local Express proxy so CORS never
+ * applies. The real target URL travels in the x-proxy-url header; all other
+ * headers (including x402 payment headers) are forwarded verbatim.
+ */
+function proxyFetch(url, opts = {}){
+  const headers = { ...(opts.headers || {}), "x-proxy-url": url };
+  return fetch("/proxy", { ...opts, headers });
+}
+
+function nowTs(){
+  const d = new Date();
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, "0")).join(":");
+}
+
+function shortAddr(addr){
+  if(!addr) return "—";
+  return addr.slice(0, 6) + "…" + addr.slice(-4);
+}
+
+function b64EncodeUnicode(str){
+  return btoa(unescape(encodeURIComponent(str)));
+}
+function b64DecodeUnicode(str){
+  return decodeURIComponent(escape(atob(str)));
+}
+
+function randomNonceHex(){
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return "0x" + Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function caip2ChainId(network){
+  // "eip155:8453" -> 8453
+  if(!network || !network.startsWith("eip155:")) return null;
+  const n = parseInt(network.split(":")[1], 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function appendLogEntry(level, message){
+  const list = $("logList");
+  const li = document.createElement("li");
+  li.className = "log-entry";
+  li.dataset.level = level;
+  li.innerHTML = `<span class="ts">${nowTs()}</span><span class="lvl">${level}</span><span></span>`;
+  li.querySelector("span:last-child").textContent = message;
+  list.appendChild(li);
+  list.parentElement.scrollTop = list.parentElement.scrollHeight;
+}
+
+function clearLog(){
+  $("logList").innerHTML = "";
+  state.exchanges = [];
+  renderRaw();
+  appendLogEntry("info", "Log cleared.");
+}
+window.clearLog = clearLog;
+
+function setStatusChip(code, text, tone){
+  const dot = $("statusDot");
+  const codeEl = $("statusCode");
+  const textEl = $("statusText");
+  codeEl.textContent = code;
+  textEl.textContent = text;
+  const colors = {
+    neutral: "var(--text-faint)",
+    amber: "var(--amber)",
+    success: "var(--teal)",
+    error: "var(--red)"
+  };
+  const color = colors[tone] || colors.neutral;
+  dot.style.background = color;
+  codeEl.style.color = color;
+  textEl.style.color = color;
+}
+
+function setPhase(text, tone){
+  const dot = $("phaseDot");
+  $("phaseText").textContent = text;
+  const colors = {
+    neutral: "var(--text-faint)",
+    amber: "var(--amber)",
+    success: "var(--teal)",
+    error: "var(--red)"
+  };
+  dot.style.background = colors[tone] || colors.neutral;
+}
+
+function setStepStatus(stepName, status, meta){
+  const step = document.querySelector(`.step[data-step="${stepName}"]`);
+  if(!step) return;
+  step.dataset.status = status;
+  if(meta !== undefined){
+    step.querySelector(".step-meta").textContent = meta;
+  }
+}
+
+function resetFlow(){
+  ["request","402","parsed","sign","retry","settled"].forEach(s => setStepStatus(s, "idle", ""));
+  state.accepts = [];
+  state.rootPayload = null;
+  state.selectedIndex = 0;
+  $("payBar")?.classList.remove("visible");
+  renderEmptyRequirements();
+}
+
+/* ============================================================
+   REQUEST FORM HELPERS (headers rows etc.)
+   ============================================================ */
+
+function switchReqTab(name){
+  document.querySelectorAll('.req-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.reqTab === name));
+  document.querySelectorAll('.req-panel').forEach(p => p.classList.toggle('active', p.dataset.reqPanel === name));
+}
+window.switchReqTab = switchReqTab;
+
+function switchResTab(name){
+  document.querySelectorAll('.res-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.resTab === name));
+  document.querySelectorAll('.res-panel').forEach(p => p.classList.toggle('active', p.dataset.resPanel === name));
+}
+window.switchResTab = switchResTab;
+
+function addHeaderRow(name = "", value = ""){
+  const wrap = $("headerRows");
+  const row = document.createElement('div');
+  row.className = 'kv-row';
+  row.innerHTML = `
+    <input type="text" class="hdr-key" placeholder="Header-Name" spellcheck="false" value="${name}">
+    <input type="text" class="hdr-val" placeholder="value" spellcheck="false" value="${value}">
+    <button class="kv-remove" aria-label="Remove header">×</button>
+  `;
+  row.querySelector(".kv-remove").addEventListener("click", () => { row.remove(); updateHeaderCount(); });
+  wrap.appendChild(row);
+  updateHeaderCount();
+}
+window.addHeaderRow = addHeaderRow;
+
+function updateHeaderCount(){
+  const rows = [...document.querySelectorAll('#headerRows .kv-row')].filter(r => r.querySelector(".hdr-key").value.trim());
+  $("headerCount").textContent = rows.length;
+}
+
+function collectHeaders(){
+  const headers = {};
+  document.querySelectorAll('#headerRows .kv-row').forEach(row => {
+    const k = row.querySelector(".hdr-key").value.trim();
+    const v = row.querySelector(".hdr-val").value;
+    if(k) headers[k] = v;
+  });
+  return headers;
+}
+
+addHeaderRow();
+
+/* ============================================================
+   WALLET
+   ============================================================ */
+
+function getEthProvider(){
+  if(!window.ethereum){
+    appendLogEntry("error", "No injected wallet found (window.ethereum is undefined). Install MetaMask or another EIP-1193 wallet.");
+    return null;
+  }
+  return new BrowserProvider(window.ethereum);
+}
+
+async function connectWallet(){
+  const provider = getEthProvider();
+  if(!provider) return;
+
+  try{
+    appendLogEntry("info", "Requesting wallet connection…");
+    const accounts = await provider.send("eth_requestAccounts", []);
+    if(!accounts || !accounts.length){
+      appendLogEntry("error", "No accounts returned by wallet.");
+      return;
+    }
+    state.account = accounts[0];
+
+    const network = await provider.getNetwork();
+    state.chainIdDec = Number(network.chainId);
+
+    const balanceWei = await provider.getBalance(state.account);
+    const balanceEth = formatEther(balanceWei);
+
+    const chainName = CHAIN_NAMES[state.chainIdDec] || `chain ${state.chainIdDec}`;
+
+    $("walletChip").classList.add("connected");
+    $("walletChipAddr").textContent = shortAddr(state.account);
+    $("connectWalletBtn").textContent = "Disconnect";
+    $("connectWalletBtn").onclick = disconnectWallet;
+
+    $("walletStatus").textContent = "connected";
+    $("walletStatus").classList.add("filled");
+    $("walletAddress").textContent = state.account;
+    $("walletAddress").classList.add("filled");
+    $("walletAddress").title = state.account;
+    $("walletNetwork").textContent = `${chainName} (${state.chainIdDec})`;
+    $("walletNetwork").classList.add("filled");
+    $("walletBalance").textContent = `${Number(balanceEth).toFixed(4)} native`;
+    $("walletBalance").classList.add("filled");
+
+    appendLogEntry("success", `Wallet connected: ${state.account} on ${chainName}.`);
+
+    window.ethereum.on?.("accountsChanged", handleAccountsChanged);
+    window.ethereum.on?.("chainChanged", handleChainChanged);
+  }catch(err){
+    appendLogEntry("error", `connectWallet() failed: ${err.message || err}`);
+  }
+}
+window.connectWallet = connectWallet;
+
+function disconnectWallet(){
+  state.account = null;
+  state.chainIdDec = null;
+  $("walletChip").classList.remove("connected");
+  $("connectWalletBtn").textContent = "Connect wallet";
+  $("connectWalletBtn").onclick = connectWallet;
+
+  ["walletStatus","walletAddress","walletNetwork","walletBalance"].forEach(id => {
+    $(id).classList.remove("filled");
+  });
+  $("walletStatus").textContent = "not connected";
+  $("walletAddress").textContent = "—";
+  $("walletAddress").removeAttribute("title");
+  $("walletNetwork").textContent = "—";
+  $("walletBalance").textContent = "—";
+
+  appendLogEntry("info", "Wallet disconnected (local state cleared).");
+}
+window.disconnectWallet = disconnectWallet;
+
+async function handleAccountsChanged(accounts){
+  if(!accounts || !accounts.length){
+    disconnectWallet();
+    return;
+  }
+  appendLogEntry("warn", "Wallet account changed — reconnecting…");
+  await connectWallet();
+}
+
+async function handleChainChanged(){
+  appendLogEntry("warn", "Wallet network changed — refreshing wallet info…");
+  if(state.account) await connectWallet();
+}
+
+/* ============================================================
+   SEND REQUEST
+   ============================================================ */
+
+async function sendRequest(){
+  const url = $("urlInput").value.trim();
+  const method = $("methodSelect").value;
+  const headers = collectHeaders();
+  const bodyRaw = $("bodyInput").value.trim();
+  const hasBody = method !== "GET" && bodyRaw.length > 0;
+
+  if(!url){
+    appendLogEntry("error", "Enter a URL before sending a request.");
+    return;
+  }
+
+  resetFlow();
+  switchResTab("headers");
+  $("resPanelHeaders").innerHTML = "";
+  setStatusChip("—", "Sending…", "neutral");
+  setPhase("Sending request", "amber");
+  setStepStatus("request", "pending", "");
+
+  state.originalRequest = { method, url, headers: { ...headers }, body: hasBody ? bodyRaw : undefined };
+
+  const fetchOpts = { method, headers: { ...headers } };
+  if(hasBody){
+    fetchOpts.body = bodyRaw;
+    if(!fetchOpts.headers["Content-Type"] && !fetchOpts.headers["content-type"]){
+      fetchOpts.headers["Content-Type"] = "application/json";
+    }
+  }
+
+  $("sendBtn").disabled = true;
+  appendLogEntry("info", `${method} ${url}`);
+
+  let res;
+  try{
+    res = await proxyFetch(url, fetchOpts);
+  }catch(err){
+    setStepStatus("request", "error", err.message || "network error");
+    setStatusChip("ERR", "Request failed", "error");
+    setPhase("Request failed", "error");
+    appendLogEntry("error", `Fetch failed: ${err.message || err}. The local proxy may be unreachable.`);
+    $("sendBtn").disabled = false;
+    return;
+  }
+
+  $("sendBtn").disabled = false;
+  setStepStatus("request", "success", `${res.status} ${res.statusText}`);
+
+  const resHeaders = {};
+  res.headers.forEach((v, k) => { resHeaders[k] = v; });
+
+  const bodyText = await res.clone().text().catch(() => "");
+
+  renderResponseHeaders(resHeaders);
+  logExchange("Initial request", state.originalRequest, { status: res.status, headers: resHeaders, body: bodyText });
+
+  if(res.status === 402){
+    setStatusChip(res.status, "Payment Required", "amber");
+    setPhase("Awaiting payment", "amber");
+    setStepStatus("402", "success", res.statusText || "Payment Required");
+    appendLogEntry("warn", "Received 402 Payment Required. Parsing payment requirements…");
+    parseRequirements(resHeaders, bodyText);
+  }else if(res.ok){
+    setStatusChip(res.status, res.statusText || "OK", "success");
+    setPhase("Resource returned (no payment required)", "success");
+    ["402","parsed","sign","retry","settled"].forEach(s => setStepStatus(s, "skipped", ""));
+    appendLogEntry("success", "Resource returned without a payment challenge.");
+  }else{
+    setStatusChip(res.status, res.statusText || "Error", "error");
+    setPhase("Request failed", "error");
+    ["402","parsed","sign","retry","settled"].forEach(s => setStepStatus(s, "skipped", ""));
+    appendLogEntry("error", `Server responded ${res.status} ${res.statusText}.`);
+  }
+}
+window.sendRequest = sendRequest;
+
+function renderResponseHeaders(headersObj){
+  const entries = Object.entries(headersObj);
+  const container = $("resPanelHeaders");
+  if(!entries.length){
+    container.innerHTML = `<div class="empty-state"><div class="glyph">⌁</div><div>No headers exposed</div><div class="hint">Cross-origin responses only expose CORS-safelisted headers unless the server sets Access-Control-Expose-Headers.</div></div>`;
+    return;
+  }
+  const rows = entries.map(([k, v]) => `
+    <tr><td class="k">${escapeHtml(k)}</td><td class="mono-val">${escapeHtml(v)}</td></tr>
+  `).join("");
+  container.innerHTML = `<table class="data-table"><thead><tr><th>Header</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+/* ============================================================
+   PARSE 402 PAYMENT REQUIREMENTS
+   ============================================================ */
+
+function parseRequirements(resHeaders, bodyText){
+  let root = null;
+
+  // 1. Try the PAYMENT-REQUIRED header (base64-encoded JSON, per x402 v2 core spec)
+  const headerVal = resHeaders["payment-required"];
+  if(headerVal){
+    try{
+      root = JSON.parse(b64DecodeUnicode(headerVal));
+      appendLogEntry("info", "Parsed payment requirements from PAYMENT-REQUIRED header.");
+    }catch(err){
+      appendLogEntry("warn", `Found PAYMENT-REQUIRED header but couldn't decode it: ${err.message}`);
+    }
+  }
+
+  // 2. Fall back to the JSON response body containing an "accepts" array
+  if(!root && bodyText){
+    try{
+      const parsedBody = JSON.parse(bodyText);
+      if(parsedBody && (parsedBody.accepts || Array.isArray(parsedBody))){
+        root = parsedBody;
+        appendLogEntry("info", "Parsed payment requirements from response body.");
+      }
+    }catch(err){
+      // not JSON, ignore
+    }
+  }
+
+  if(!root){
+    setStepStatus("parsed", "error", "no accepts[] found in headers or body");
+    appendLogEntry("error", "Could not find payment requirements — no PAYMENT-REQUIRED header and no accepts[] in the body.");
+    renderEmptyRequirements();
+    return;
+  }
+
+  const accepts = Array.isArray(root) ? root : (root.accepts || []);
+  const normalized = accepts.map(item => normalizeRequirement(item, root));
+
+  if(!normalized.length){
+    setStepStatus("parsed", "error", "accepts[] was empty");
+    appendLogEntry("error", "Payment requirements payload had an empty accepts[] array.");
+    renderEmptyRequirements();
+    return;
+  }
+
+  state.rootPayload = root;
+  state.accepts = normalized;
+  state.selectedIndex = 0;
+
+  setStepStatus("parsed", "success", `${normalized.length} option${normalized.length > 1 ? "s" : ""} found`);
+  appendLogEntry("success", `Parsed ${normalized.length} payment option(s).`);
+  renderRequirements(normalized);
+}
+
+function normalizeRequirement(item, root){
+  const price = item.price && typeof item.price === "object" ? item.price : null;
+  return {
+    scheme: item.scheme || "exact",
+    network: item.network,
+    payTo: item.payTo,
+    asset: item.asset || (price && price.asset) || null,
+    amount: item.amount || item.maxAmountRequired || (price && price.amountInAtomicUnits) || null,
+    maxTimeoutSeconds: item.maxTimeoutSeconds || 60,
+    extra: item.extra || (price && price.eip712) || {},
+    description: item.description || root.description || "",
+    x402Version: root.x402Version || 1
+  };
+}
+
+function renderEmptyRequirements(){
+  $("resPanelRequirements").innerHTML = `
+    <div class="empty-state">
+      <div class="glyph">$</div>
+      <div>No payment requirements parsed</div>
+      <div class="hint">Once the endpoint returns a 402, the parsed accepts array will be listed here — scheme, network, asset, amount, and payTo per option.</div>
+    </div>`;
+}
+
+function renderRequirements(accepts){
+  switchResTab("requirements");
+
+  const rows = accepts.map((a, i) => {
+    const chainName = CHAIN_NAMES[caip2ChainId(a.network)] || a.network;
+    return `
+      <tr class="req-option-row" data-index="${i}">
+        <td><input type="radio" name="acceptOption" ${i === 0 ? "checked" : ""} data-index="${i}"></td>
+        <td class="mono-val">${escapeHtml(a.scheme)}</td>
+        <td class="mono-val">${escapeHtml(chainName)}</td>
+        <td class="mono-val" title="${escapeHtml(a.asset || "")}">${shortAddr(a.asset)}</td>
+        <td class="mono-val">${escapeHtml(a.amount ?? "—")}</td>
+        <td class="mono-val" title="${escapeHtml(a.payTo || "")}">${shortAddr(a.payTo)}
+          <div class="balance-line" id="bal-line-${i}"></div>
+        </td>
+        <td><button class="btn-mini" data-balance-idx="${i}">Check balance</button></td>
+      </tr>
+    `;
+  }).join("");
+
+  $("resPanelRequirements").innerHTML = `
+    <table class="data-table">
+      <thead>
+        <tr><th></th><th>Scheme</th><th>Network</th><th>Asset</th><th>Amount</th><th>Pay to</th><th></th></tr>
+      </thead>
+      <tbody id="acceptOptionsBody">${rows}</tbody>
+    </table>
+
+    <div class="pay-bar visible" id="payBar">
+      <div class="pay-bar-row">
+        <label style="font-family:var(--mono); font-size:11.5px; color:var(--text-dim);">Payment header:</label>
+        <select id="paymentHeaderName">
+          <option value="PAYMENT-SIGNATURE">PAYMENT-SIGNATURE (v2)</option>
+          <option value="X-PAYMENT">X-PAYMENT (legacy v1)</option>
+        </select>
+        <button class="btn btn-primary" id="signPayBtn">Sign &amp; retry with payment</button>
+      </div>
+      <div class="warning">Signing authorizes a real transfer of the exact amount shown above from your connected wallet. Only sign for endpoints you trust.</div>
+    </div>
+  `;
+
+  document.querySelectorAll('input[name="acceptOption"]').forEach(r => {
+    r.addEventListener("change", e => { state.selectedIndex = Number(e.target.dataset.index); });
+  });
+  document.querySelectorAll('[data-balance-idx]').forEach(btn => {
+    btn.addEventListener("click", () => checkRowBalance(Number(btn.dataset.balanceIdx)));
+  });
+  $("signPayBtn").addEventListener("click", signAndRetry);
+}
+
+/* ============================================================
+   BALANCE CHECK (per requirement row)
+   ============================================================ */
+
+async function checkRowBalance(index){
+  const req = state.accepts[index];
+  const lineEl = $(`bal-line-${index}`);
+  if(!req.asset){
+    lineEl.innerHTML = `<span class="val err">no asset address on this option</span>`;
+    return;
+  }
+  if(!state.account){
+    lineEl.innerHTML = `<span class="val err">connect wallet first</span>`;
+    return;
+  }
+
+  const provider = getEthProvider();
+  if(!provider) return;
+
+  lineEl.innerHTML = `<span class="val">checking…</span>`;
+
+  try{
+    const reqChainId = caip2ChainId(req.network);
+    if(reqChainId !== null && reqChainId !== state.chainIdDec){
+      lineEl.innerHTML = `<span class="val err">wallet is on a different network</span>`;
+      return;
+    }
+
+    const balData = ERC20_IFACE.encodeFunctionData("balanceOf", [state.account]);
+    const balResult = await provider.call({ to: req.asset, data: balData });
+    const [balanceRaw] = ERC20_IFACE.decodeFunctionResult("balanceOf", balResult);
+
+    let decimals = req.extra?.decimals;
+    if(decimals === undefined){
+      try{
+        const decData = ERC20_IFACE.encodeFunctionData("decimals", []);
+        const decResult = await provider.call({ to: req.asset, data: decData });
+        decimals = Number(ERC20_IFACE.decodeFunctionResult("decimals", decResult)[0]);
+      }catch{
+        decimals = 6; // reasonable stablecoin default
+      }
+    }
+
+    const formatted = formatUnits(balanceRaw, decimals);
+    lineEl.innerHTML = `<span class="val">balance: ${formatted}</span>`;
+    appendLogEntry("info", `Balance for option ${index}: ${formatted} (raw ${balanceRaw.toString()})`);
+  }catch(err){
+    lineEl.innerHTML = `<span class="val err">balance check failed</span>`;
+    appendLogEntry("error", `checkRowBalance(${index}) failed: ${err.message || err}`);
+  }
+}
+
+/* ============================================================
+   SIGN & RETRY (EIP-3009 "exact" EVM scheme)
+   ============================================================ */
+
+async function signAndRetry(){
+  if(!state.account){
+    appendLogEntry("error", "Connect a wallet before signing a payment.");
+    return;
+  }
+  const req = state.accepts[state.selectedIndex];
+  if(!req){
+    appendLogEntry("error", "No payment option selected.");
+    return;
+  }
+  if(!req.asset || !req.amount || !req.payTo){
+    setStepStatus("sign", "error", "selected option is missing asset/amount/payTo");
+    appendLogEntry("error", "Selected payment option is missing asset, amount, or payTo — cannot build a signature for it.");
+    return;
+  }
+
+  const reqChainId = caip2ChainId(req.network);
+  setStepStatus("sign", "pending", "");
+  setPhase("Waiting for wallet signature", "amber");
+
+  // Switch network if needed
+  if(reqChainId !== null && reqChainId !== state.chainIdDec){
+    appendLogEntry("warn", `Wallet is on chain ${state.chainIdDec}, option requires ${reqChainId}. Requesting network switch…`);
+    try{
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: "0x" + reqChainId.toString(16) }]
+      });
+      await connectWallet(); // refresh cached chain id / balance
+    }catch(err){
+      setStepStatus("sign", "error", "network switch rejected or chain not added to wallet");
+      appendLogEntry("error", `Network switch failed: ${err.message || err}. Add/switch to chain ${reqChainId} manually and try again.`);
+      return;
+    }
+  }
+
+  const provider = getEthProvider();
+  if(!provider) return;
+
+  let signature;
+  const validAfter = 0;
+  const validBefore = Math.floor(Date.now() / 1000) + (req.maxTimeoutSeconds || 60);
+  const nonce = randomNonceHex();
+
+  const domain = {
+    name: req.extra?.name || "USD Coin",
+    version: req.extra?.version || "2",
+    chainId: reqChainId,
+    verifyingContract: req.asset
+  };
+  const types = {
+    TransferWithAuthorization: [
+      { name: "from", type: "address" },
+      { name: "to", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" }
+    ]
+  };
+  const message = {
+    from: state.account,
+    to: req.payTo,
+    value: req.amount,
+    validAfter,
+    validBefore,
+    nonce
+  };
+
+  try{
+    const signer = await provider.getSigner();
+    appendLogEntry("info", "Requesting EIP-712 signature (TransferWithAuthorization) from wallet…");
+    signature = await signer.signTypedData(domain, types, message);
+  }catch(err){
+    setStepStatus("sign", "error", err.message || "user rejected or signing failed");
+    setPhase("Signature rejected", "error");
+    appendLogEntry("error", `Signing failed: ${err.message || err}`);
+    return;
+  }
+
+  setStepStatus("sign", "success", "signature obtained");
+  appendLogEntry("success", "Wallet returned a signature.");
+
+  const paymentPayload = {
+    x402Version: req.x402Version || 1,
+    scheme: req.scheme || "exact",
+    network: req.network,
+    payload: {
+      signature,
+      authorization: {
+        from: state.account,
+        to: req.payTo,
+        value: String(req.amount),
+        validAfter: String(validAfter),
+        validBefore: String(validBefore),
+        nonce
+      }
+    }
+  };
+
+  const encodedPayload = b64EncodeUnicode(JSON.stringify(paymentPayload));
+  const headerName = $("paymentHeaderName").value;
+
+  setStepStatus("retry", "pending", "");
+  setPhase("Retrying request with payment", "amber");
+  appendLogEntry("info", `Retrying original request with ${headerName} header…`);
+
+  const retryHeaders = { ...state.originalRequest.headers, [headerName]: encodedPayload };
+  const retryOpts = { method: state.originalRequest.method, headers: retryHeaders };
+  if(state.originalRequest.body !== undefined) retryOpts.body = state.originalRequest.body;
+
+  let res;
+  try{
+    res = await proxyFetch(state.originalRequest.url, retryOpts);
+  }catch(err){
+    setStepStatus("retry", "error", err.message || "network error");
+    setStepStatus("settled", "error", "");
+    setStatusChip("ERR", "Retry failed", "error");
+    setPhase("Retry failed", "error");
+    appendLogEntry("error", `Retry fetch failed: ${err.message || err}`);
+    return;
+  }
+
+  const resHeaders = {};
+  res.headers.forEach((v, k) => { resHeaders[k] = v; });
+  const bodyText = await res.clone().text().catch(() => "");
+
+  renderResponseHeaders(resHeaders);
+  logExchange("Retry with payment", { ...state.originalRequest, headers: retryHeaders }, { status: res.status, headers: resHeaders, body: bodyText });
+
+  if(res.ok){
+    setStepStatus("retry", "success", `${res.status} ${res.statusText}`);
+    const settlement = resHeaders["payment-response"];
+    let settlementMeta = "resource returned";
+    if(settlement){
+      try{ settlementMeta = JSON.stringify(JSON.parse(b64DecodeUnicode(settlement))); }
+      catch{ settlementMeta = "settlement info present but undecodable"; }
+    }
+    setStepStatus("settled", "success", settlementMeta);
+    setStatusChip(res.status, res.statusText || "OK", "success");
+    setPhase("Settled — resource returned", "success");
+    appendLogEntry("success", `Payment accepted. Server responded ${res.status}.`);
+  }else{
+    setStepStatus("retry", "success", `${res.status} ${res.statusText}`);
+    setStepStatus("settled", "error", `server rejected payment: ${res.status}`);
+    setStatusChip(res.status, res.statusText || "Rejected", "error");
+    setPhase("Payment rejected by server", "error");
+    appendLogEntry("error", `Server rejected the payment attempt: ${res.status} ${res.statusText}.`);
+  }
+}
+
+/* ============================================================
+   RAW TAB
+   ============================================================ */
+
+function logExchange(label, request, response){
+  state.exchanges.push({ label, request, response });
+  renderRaw();
+}
+
+function renderRaw(){
+  const container = $("resPanelRaw");
+  if(!state.exchanges.length){
+    container.innerHTML = `<div class="empty-state"><div class="glyph">{ }</div><div>Nothing to show</div><div class="hint">The full request/response cycle — including 402 and retry — will appear here as JSON.</div></div>`;
+    return;
+  }
+  container.innerHTML = state.exchanges.map(ex => `
+    <div class="raw-block">
+      <div class="raw-block-label">${escapeHtml(ex.label)}</div>
+      <pre class="raw-json">${escapeHtml(JSON.stringify(ex, null, 2))}</pre>
+    </div>
+  `).join("");
+}
+
+/* ============================================================
+   INIT
+   ============================================================ */
+
+appendLogEntry("info", "Inspector ready. Connect a wallet and send a request to begin.");
+</script>
+
+</body>
+</html>

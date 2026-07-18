@@ -1,0 +1,16 @@
+{
+  "name": "x402-inspector",
+  "version": "1.0.0",
+  "description": "Serve the x402 inspector frontend and proxy requests to x402 endpoints to avoid CORS.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
