@@ -2136,6 +2136,24 @@
         try {
           appendLogEntry("info", "Requesting EIP-712 signature from wallet via @x402 client…");
           paymentPayload = await httpClient.createPaymentPayload(paymentRequired);
+          // The signature only covers the authorization + EIP-712 domain, not the
+          // `accepted` metadata. Some servers echo-match `accepted` byte-for-byte
+          // against their original accepts[] entry (object-form asset, empty extra),
+          // so restore the untouched original requirement before encoding.
+          const originalAccepts = Array.isArray(state.rootPayload)
+            ? state.rootPayload
+            : state.rootPayload?.accepts || [];
+          const original = originalAccepts.find((o) => {
+            const addr = o.asset && typeof o.asset === "object" ? o.asset.address : o.asset;
+            return (
+              o.network === req.network &&
+              (o.payTo || o.pay_to) === req.payTo &&
+              (addr || "").toLowerCase() === (req.asset || "").toLowerCase()
+            );
+          });
+          if (original && paymentPayload && paymentPayload.accepted) {
+            paymentPayload.accepted = original;
+          }
           encodedHeaders = httpClient.encodePaymentSignatureHeader(paymentPayload);
         } catch (err) {
           setStepStatus("sign", "error", err.message || "user rejected or signing failed");
