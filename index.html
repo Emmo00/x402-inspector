@@ -1421,6 +1421,31 @@
         return decodeURIComponent(escape(atob(str)));
       }
 
+      function b64EncodeUnicode(str) {
+        return btoa(unescape(encodeURIComponent(str)));
+      }
+
+      /*
+       * Some x402 servers describe the asset as an object
+       * { address, decimals, eip712: { name, version } } and leave `extra` empty.
+       * The @x402 client expects `asset` to be a plain address string and the
+       * EIP-712 domain (name, version) to live in `extra`. Rewrite each accepts[]
+       * entry into that canonical shape so signing can find the domain.
+       */
+      function canonicalizeAcceptsShape(root) {
+        if (!root || !Array.isArray(root.accepts)) return root;
+        const accepts = root.accepts.map((item) => {
+          const asset = item.asset;
+          if (asset && typeof asset === "object") {
+            const { address, eip712, ...restAsset } = asset;
+            const extra = item.extra && Object.keys(item.extra).length ? item.extra : eip712 || {};
+            return { ...item, ...restAsset, asset: address, extra };
+          }
+          return item;
+        });
+        return { ...root, accepts };
+      }
+
       function caip2ChainId(network) {
         // "eip155:8453" -> 8453
         if (!network || !network.startsWith("eip155:")) return null;
@@ -2081,10 +2106,22 @@
 
           // Let the library parse the raw 402 (header first, body fallback) into its
           // own PaymentRequired type — this is what fixes the v1/v2 payload mismatch.
-          const getHeader = (name) => state.raw402.headers[name.toLowerCase()] ?? null;
+          // We canonicalize object-form `asset` fields first so the library can find
+          // the EIP-712 domain (some servers nest it under asset.eip712).
+          const getHeader = (name) => {
+            const val = state.raw402.headers[name.toLowerCase()] ?? null;
+            if (val && name.toLowerCase() === "payment-required") {
+              try {
+                return b64EncodeUnicode(JSON.stringify(canonicalizeAcceptsShape(JSON.parse(b64DecodeUnicode(val)))));
+              } catch {
+                return val;
+              }
+            }
+            return val;
+          };
           let parsedBody;
           try {
-            parsedBody = JSON.parse(state.raw402.bodyText);
+            parsedBody = canonicalizeAcceptsShape(JSON.parse(state.raw402.bodyText));
           } catch {
             parsedBody = undefined;
           }
