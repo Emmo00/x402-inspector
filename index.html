@@ -343,6 +343,15 @@
         border-bottom: 1px solid var(--border-soft);
       }
 
+      .share-btn {
+        margin-left: auto;
+        align-self: center;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+      }
+
       .req-tab-btn {
         background: none;
         border: none;
@@ -1144,6 +1153,12 @@
             Headers <span class="count" id="headerCount">0</span>
           </button>
           <button class="req-tab-btn" data-req-tab="body" onclick="switchReqTab('body')">Body</button>
+          <button class="btn btn-ghost share-btn" id="shareBtn" onclick="shareRequest()" title="Copy a shareable link to this request">
+            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="currentColor">
+              <path d="M11 5.5a2.5 2.5 0 1 0-2.45-3H8.5L5.06 4.72a2.5 2.5 0 1 0 0 6.56L8.5 13.5h.05A2.5 2.5 0 1 0 11 10.5a2.49 2.49 0 0 0-1.86.83L6.2 9.66a2.5 2.5 0 0 0 0-3.32l2.94-1.67A2.49 2.49 0 0 0 11 5.5z"/>
+            </svg>
+            Share
+          </button>
         </div>
 
         <div class="req-panel active" data-req-panel="headers" id="reqPanelHeaders">
@@ -1570,10 +1585,14 @@
         const row = document.createElement("div");
         row.className = "kv-row";
         row.innerHTML = `
-    <input type="text" class="hdr-key" placeholder="Header-Name" spellcheck="false" value="${name}">
-    <input type="text" class="hdr-val" placeholder="value" spellcheck="false" value="${value}">
+    <input type="text" class="hdr-key" placeholder="Header-Name" spellcheck="false">
+    <input type="text" class="hdr-val" placeholder="value" spellcheck="false">
     <button class="kv-remove" aria-label="Remove header">×</button>
   `;
+        // Assign via property (not interpolated into innerHTML) so header names
+        // and values loaded from a shared URL can't break out of the markup.
+        row.querySelector(".hdr-key").value = name;
+        row.querySelector(".hdr-val").value = value;
         row.querySelector(".kv-remove").addEventListener("click", () => {
           row.remove();
           updateHeaderCount();
@@ -1600,7 +1619,100 @@
         return headers;
       }
 
-      addHeaderRow();
+      /* ============================================================
+   SHAREABLE REQUEST URL
+   ----------------------------------------------------------------
+   Serialize the composed request (url, method, headers, body) into
+   this page's query string so it can be copied and shared. On load,
+   an incoming query string rehydrates the request form.
+   ============================================================ */
+
+      // Read the URL/method/headers/body from the page's own query string
+      // and populate the request form. Returns true if any request param
+      // was present (so we know whether to seed a default empty header row).
+      function loadRequestFromQuery() {
+        const params = new URLSearchParams(window.location.search);
+        const url = params.get("url");
+        const method = params.get("method");
+        const body = params.get("body");
+        const headerEntries = params.getAll("header");
+
+        if (url !== null) $("urlInput").value = url;
+        if (method) {
+          const m = method.toUpperCase();
+          if ([...$("methodSelect").options].some((o) => o.value === m)) {
+            $("methodSelect").value = m;
+          }
+        }
+        if (body !== null) $("bodyInput").value = body;
+
+        // Each "header" param is "Name: value"; split on the first colon.
+        headerEntries.forEach((raw) => {
+          const idx = raw.indexOf(":");
+          if (idx === -1) {
+            addHeaderRow(raw.trim(), "");
+          } else {
+            addHeaderRow(raw.slice(0, idx).trim(), raw.slice(idx + 1).trim());
+          }
+        });
+
+        // If the body was shared on a GET, reveal the body tab so it isn't hidden.
+        if (body && $("methodSelect").value !== "GET") switchReqTab("body");
+
+        return url !== null || method !== null || body !== null || headerEntries.length > 0;
+      }
+
+      // Build a shareable URL for the current request from the form state.
+      function buildShareUrl() {
+        const params = new URLSearchParams();
+        const url = $("urlInput").value.trim();
+        const method = $("methodSelect").value;
+        const body = $("bodyInput").value;
+
+        if (url) params.set("url", url);
+        if (method && method !== "GET") params.set("method", method);
+        Object.entries(collectHeaders()).forEach(([k, v]) => {
+          params.append("header", `${k}: ${v}`);
+        });
+        if (body.trim()) params.set("body", body);
+
+        const base = window.location.origin + window.location.pathname;
+        const qs = params.toString();
+        return qs ? `${base}?${qs}` : base;
+      }
+
+      async function shareRequest() {
+        const shareUrl = buildShareUrl();
+        const btn = $("shareBtn");
+        // Reflect the composed request in the address bar without reloading.
+        try {
+          window.history.replaceState(null, "", shareUrl);
+        } catch (_) {
+          /* replaceState can throw for file:// origins — ignore. */
+        }
+        try {
+          await navigator.clipboard.writeText(shareUrl);
+          if (btn) {
+            const prev = btn.dataset.label || btn.textContent;
+            btn.dataset.label = prev;
+            btn.textContent = "Link copied";
+            setTimeout(() => {
+              btn.textContent = btn.dataset.label;
+            }, 1500);
+          }
+          appendLogEntry("info", "Shareable request URL copied to clipboard.");
+        } catch (err) {
+          appendLogEntry("warn", `Copy failed — URL is in the address bar. ${err.message || err}`);
+        }
+      }
+      window.shareRequest = shareRequest;
+
+      // Seed the header table from the shared URL, or a single empty row.
+      if (!loadRequestFromQuery()) {
+        addHeaderRow();
+      } else if (!document.querySelector("#headerRows .kv-row")) {
+        addHeaderRow();
+      }
 
       /* ============================================================
    WALLET
