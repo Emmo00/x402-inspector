@@ -1787,6 +1787,8 @@
           setPhase("Request failed", "error");
           ["402", "parsed", "sign", "retry", "settled"].forEach((s) => setStepStatus(s, "skipped", ""));
           appendLogEntry("error", `Server responded ${res.status} ${res.statusText}.`);
+          renderResponseBody(bodyText, resHeaders, bodyBlob);
+          switchResTab("body");
         }
       }
       window.sendRequest = sendRequest;
