@@ -1413,7 +1413,7 @@
       }
 
       function shortAddr(addr) {
-        if (!addr) return "—";
+        if (!addr || typeof addr !== "string") return "—";
         return addr.slice(0, 6) + "…" + addr.slice(-4);
       }
 
@@ -1879,14 +1879,20 @@
 
       function normalizeRequirement(item, root) {
         const price = item.price && typeof item.price === "object" ? item.price : null;
+        // `asset` may be a plain address string or an object { address, decimals, eip712 }.
+        const rawAsset = item.asset || (price && price.asset) || null;
+        const assetObj = rawAsset && typeof rawAsset === "object" ? rawAsset : null;
+        const asset = assetObj ? assetObj.address || null : rawAsset;
+        const extra = item.extra || (price && price.eip712) || (assetObj && assetObj.eip712) || {};
         return {
           scheme: item.scheme || "exact",
           network: item.network,
           payTo: item.payTo,
-          asset: item.asset || (price && price.asset) || null,
+          asset,
+          assetDecimals: assetObj ? assetObj.decimals : item.decimals,
           amount: item.amount || item.maxAmountRequired || (price && price.amountInAtomicUnits) || null,
           maxTimeoutSeconds: item.maxTimeoutSeconds || 60,
-          extra: item.extra || (price && price.eip712) || {},
+          extra,
           description: item.description || root.description || "",
           x402Version: root.x402Version || 1,
         };
